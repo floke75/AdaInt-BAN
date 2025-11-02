@@ -1,3 +1,13 @@
+"""This script is used to test a trained model for image enhancement.
+
+This script provides a command-line interface for evaluating a trained image
+enhancement model on a test dataset. It handles argument parsing,
+configuration loading, model and checkpoint loading, and evaluation.
+It can also save the enhanced images for visual inspection.
+
+Example:
+    python tools/test.py configs/adaint/adaint_fivek.py ./work_dirs/adaint_fivek/latest.pth --save-path ./results/
+"""
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import os

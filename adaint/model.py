@@ -19,7 +19,19 @@ from ailut import ailut_transform
 
 
 class BasicBlock(nn.Sequential):
-    r"""The basic block module (Conv+LeakyReLU[+InstanceNorm]).
+    """A basic building block for convolutional neural networks.
+
+    This block consists of a 2D convolution layer followed by a LeakyReLU
+    activation. Optionally, it can include an instance normalization layer.
+
+    Args:
+        in_channels (int): The number of input channels.
+        out_channels (int): The number of output channels.
+        kernel_size (int, optional): The size of the convolutional kernel.
+            Defaults to 3.
+        stride (int, optional): The stride of the convolution. Defaults to 1.
+        norm (bool, optional): Whether to include an instance normalization
+            layer. Defaults to False.
     """
 
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, norm=False):
@@ -33,15 +45,22 @@ class BasicBlock(nn.Sequential):
 
 
 class TPAMIBackbone(nn.Sequential):
-    r"""The 5-layer CNN backbone module in [TPAMI 3D-LUT]
-        (https://github.com/HuiZeng/Image-Adaptive-3DLUT).
+    """A 5-layer CNN backbone for image feature extraction.
+
+    This backbone is based on the architecture described in the TPAMI 3D-LUT
+    paper. It processes an input image, extracts a feature vector, and
+    prepares it for the LUT generator.
 
     Args:
-        pretrained (bool, optional): [ignored].
-        input_resolution (int, optional): Resolution for pre-downsampling. Default: 256.
-        extra_pooling (bool, optional): Whether to insert an extra pooling layer
-            at the very end of the module to reduce the number of parameters of
-            the subsequent module. Default: False.
+        pretrained (bool, optional): This argument is ignored as no pretrained
+            weights are used. Defaults to False.
+        input_resolution (int, optional): The resolution to which input images
+            are downsampled before feature extraction. Defaults to 256.
+        extra_pooling (bool, optional): If True, an extra adaptive average
+            pooling layer is added at the end of the backbone. This reduces
+            the spatial dimensions of the output feature map, which can
+            decrease the number of parameters in subsequent layers.
+            Defaults to False.
     """
 
     def __init__(self, pretrained=False, input_resolution=256, extra_pooling=False):
@@ -60,19 +79,38 @@ class TPAMIBackbone(nn.Sequential):
         self.out_channels = 128 * (4 if extra_pooling else 64)
 
     def forward(self, imgs):
+        """Processes the input image tensor to extract features.
+
+        The input images are first resized to a fixed resolution and then
+        passed through the convolutional layers. The resulting feature map
+        is flattened into a vector.
+
+        Args:
+            imgs (torch.Tensor): A batch of input images with shape
+                (b, c, h, w).
+
+        Returns:
+            torch.Tensor: A batch of flattened feature vectors with shape
+                (b, f), where f is the number of features.
+        """
         imgs = F.interpolate(imgs, size=(self.input_resolution,) * 2,
             mode='bilinear', align_corners=False)
         return super().forward(imgs).view(imgs.shape[0], -1)
 
 
 class Res18Backbone(nn.Module):
-    r"""The ResNet-18 backbone.
+    """A ResNet-18 backbone for image feature extraction.
+
+    This module uses a pretrained ResNet-18 model from torchvision to extract
+    features from input images. The final fully connected layer is replaced
+    with an identity mapping to output the feature vector.
 
     Args:
-        pretrained (bool, optional): Whether to use the torchvison pretrained weights.
-            Default: True.
-        input_resolution (int, optional): Resolution for pre-downsampling. Default: 224.
-        extra_pooling (bool, optional): [ignore].
+        pretrained (bool, optional): If True, loads weights pretrained on
+            ImageNet. Defaults to True.
+        input_resolution (int, optional): The resolution to which input images
+            are downsampled before feature extraction. Defaults to 224.
+        extra_pooling (bool, optional): This argument is ignored.
     """
 
     def __init__(self, pretrained=True, input_resolution=224, extra_pooling=False):
@@ -84,19 +122,43 @@ class Res18Backbone(nn.Module):
         self.out_channels = 512
 
     def forward(self, imgs):
+        """Processes the input image tensor to extract features.
+
+        The input images are first resized to a fixed resolution and then
+        passed through the ResNet-18 model. The resulting feature map is
+        flattened into a vector.
+
+        Args:
+            imgs (torch.Tensor): A batch of input images with shape
+                (b, c, h, w).
+
+        Returns:
+            torch.Tensor: A batch of flattened feature vectors with shape
+                (b, f), where f is the number of features.
+        """
         imgs = F.interpolate(imgs, size=(self.input_resolution,) * 2,
             mode='bilinear', align_corners=False)
         return self.net(imgs).view(imgs.shape[0], -1)
 
 
 class LUTGenerator(nn.Module):
-    r"""The LUT generator module (mapping h).
+    """Generates a 3D Lookup Table (LUT) from an image feature vector.
+
+    This module takes a feature vector extracted from an image and generates
+    a corresponding 3D LUT. The LUT is constructed as a linear combination of
+    a set of basis LUTs, where the combination weights are learned from the
+    input features.
+
+    This corresponds to the mapping `h` in the paper.
 
     Args:
-        n_colors (int): Number of input color channels.
-        n_vertices (int): Number of sampling points along each lattice dimension.
-        n_feats (int): Dimension of the input image representation vector.
-        n_ranks (int): Number of ranks in the mapping h (or the number of basis LUTs).
+        n_colors (int): The number of color channels in the input image (e.g.,
+            3 for RGB).
+        n_vertices (int): The number of sampling points (vertices) along each
+            dimension of the 3D LUT.
+        n_feats (int): The dimensionality of the input feature vector.
+        n_ranks (int): The number of basis LUTs to use for constructing the
+            final LUT. This is also referred to as the number of ranks.
     """
 
     def __init__(self, n_colors, n_vertices, n_feats, n_ranks) -> None:
@@ -131,12 +193,47 @@ class LUTGenerator(nn.Module):
         self.basis_luts_bank.weight.data.copy_(identity_lut.t())
 
     def forward(self, x):
+        """Generates a batch of 3D LUTs from a batch of feature vectors.
+
+        Args:
+            x (torch.Tensor): A batch of input feature vectors with shape
+                (b, f), where b is the batch size and f is the number of
+                features.
+
+        Returns:
+            A tuple containing:
+            - torch.Tensor: The learned combination weights for the basis
+              LUTs, with shape (b, r), where r is the number of ranks.
+            - torch.Tensor: The generated 3D LUTs, with shape
+              (b, c, d, d, d), where c is the number of color channels and d
+              is the number of vertices.
+        """
         weights = self.weights_generator(x)
         luts = self.basis_luts_bank(weights)
         luts = luts.view(x.shape[0], -1, *((self.n_vertices,) * self.n_colors))
         return weights, luts
 
     def regularizations(self, smoothness, monotonicity):
+        """Computes regularization terms for the basis LUTs.
+
+        This method calculates two regularization terms:
+        - Smoothness: Encourages the basis LUTs to be smooth, penalizing
+          large differences between adjacent vertices.
+        - Monotonicity: Encourages the basis LUTs to be monotonically
+          increasing, which is a desirable property for image enhancement
+          to avoid color artifacts.
+
+        Args:
+            smoothness (float): The weight for the smoothness regularization
+                term.
+            monotonicity (float): The weight for the monotonicity
+                regularization term.
+
+        Returns:
+            A tuple containing:
+            - torch.Tensor: The smoothness regularization loss.
+            - torch.Tensor: The monotonicity regularization loss.
+        """
         basis_luts = self.basis_luts_bank.weight.t().view(
             self.n_ranks, self.n_colors, *((self.n_vertices,) * self.n_colors))
         tv, mn = 0, 0
@@ -150,15 +247,23 @@ class LUTGenerator(nn.Module):
 
 
 class AdaInt(nn.Module):
-    r"""The Adaptive Interval Learning (AdaInt) module (mapping g).
+    """The Adaptive Interval Learning (AdaInt) module.
 
-    It consists of a single fully-connected layer and some post-process operations.
+    This module learns non-uniform sampling intervals for the 3D LUT,
+    allowing for a more adaptive and expressive color transformation. It
+    consists of a single fully-connected layer that predicts the sampling
+    intervals from an image feature vector.
+
+    This corresponds to the mapping `g` in the paper.
 
     Args:
-        n_colors (int): Number of input color channels.
-        n_vertices (int): Number of sampling points along each lattice dimension.
-        n_feats (int): Dimension of the input image representation vector.
-        adaint_share (bool, optional): Whether to enable Share-AdaInt. Default: False.
+        n_colors (int): The number of color channels.
+        n_vertices (int): The number of sampling points (vertices) along each
+            dimension of the LUT.
+        n_feats (int): The dimensionality of the input feature vector.
+        adaint_share (bool, optional): If True, the same set of sampling
+            intervals is shared across all color channels. This can reduce
+            the number of parameters. Defaults to False.
     """
 
     def __init__(self, n_colors, n_vertices, n_feats, adaint_share=False) -> None:
@@ -180,12 +285,17 @@ class AdaInt(nn.Module):
         nn.init.ones_(self.intervals_generator.bias)
 
     def forward(self, x):
-        r"""Forward function for AdaInt module.
+        """Generates the sampling coordinates for the 3D LUT.
 
         Args:
-            x (tensor): Input image representation, shape (b, f).
+            x (torch.Tensor): A batch of input feature vectors with shape
+                (b, f), where b is the batch size and f is the number of
+                features.
+
         Returns:
-            Tensor: Sampling coordinates along each lattice dimension, shape (b, c, d).
+            torch.Tensor: The learned sampling coordinates (vertices) for
+                the 3D LUT, with shape (b, c, d), where c is the number of
+                color channels and d is the number of vertices.
         """
         x = x.view(x.shape[0], -1)
         intervals = self.intervals_generator(x).view(
@@ -199,30 +309,42 @@ class AdaInt(nn.Module):
 
 @MODELS.register_module()
 class AiLUT(BaseModel):
-    r"""Adaptive-Interval 3D Lookup Table for real-time image enhancement.
+    """Adaptive-Interval 3D Lookup Table for real-time image enhancement.
+
+    This class implements the core of the AiLUT model. It integrates a
+    backbone for feature extraction, a LUT generator, and the AdaInt module
+    to create an image-adaptive 3D LUT. This LUT is then used to transform
+    the input image for enhancement.
 
     Args:
-        n_ranks (int, optional): Number of ranks in the mapping h
-            (or the number of basis LUTs). Default: 3.
-        n_vertices (int, optional): Number of sampling points along
-            each lattice dimension. Default: 33.
-        en_adaint (bool, optional): Whether to enable AdaInt. Default: True.
-        en_adaint_share (bool, optional): Whether to enable Share-AdaInt.
-            Only used when `en_adaint` is True. Default: False.
-        backbone (str, optional): Backbone architecture to use. Can be either 'tpami'
-            or 'res18'. Default: 'tpami'.
-        pretrained (bool, optional): Whether to use ImageNet-pretrained weights.
-            Only used when `backbone` is 'res18'. Default: None.
-        n_colors (int, optional): Number of input color channels. Default: 3.
-        sparse_factor (float, optional): Loss weight for the sparse regularization term.
-            Default: 0.0001.
-        smooth_factor (float, optional): Loss weight for the smoothness regularization term.
-            Default: 0.
-        monotonicity_factor (float, optional): Loss weight for the monotonicaity
-            regularization term. Default: 10.0.
-        recons_loss (dict, optional): Config for pixel-wise reconstruction loss.
-        train_cfg (dict, optional): Config for training. Default: None.
-        test_cfg (dict, optional): Config for testing. Default: None.
+        n_ranks (int, optional): The number of basis LUTs. Defaults to 3.
+        n_vertices (int, optional): The number of sampling points along each
+            dimension of the LUT. Defaults to 33.
+        en_adaint (bool, optional): If True, enables the AdaInt module for
+            adaptive interval learning. Defaults to True.
+        en_adaint_share (bool, optional): If True, shares sampling intervals
+            across color channels in AdaInt. Only effective if `en_adaint`
+            is True. Defaults to False.
+        backbone (str, optional): The architecture of the backbone network.
+            Can be either 'tpami' or 'res18'. Defaults to 'tpami'.
+        pretrained (bool, optional): If True, loads pretrained weights for the
+            backbone (only applicable to 'res18'). Defaults to False.
+        n_colors (int, optional): The number of color channels. Defaults to 3.
+        sparse_factor (float, optional): The weight for the sparse
+            regularization loss on the LUT combination weights. Defaults to
+            0.0001.
+        smooth_factor (float, optional): The weight for the smoothness
+            regularization loss on the basis LUTs. Defaults to 0.
+        monotonicity_factor (float, optional): The weight for the
+            monotonicity regularization loss on the basis LUTs. Defaults to
+            10.0.
+        recons_loss (dict, optional): Configuration for the reconstruction
+            loss between the enhanced and ground-truth images. Defaults to
+            `dict(type='L2Loss', loss_weight=1.0, reduction='mean')`.
+        train_cfg (dict, optional): Configuration for training, such as the
+            number of iterations to fix the AdaInt module. Defaults to None.
+        test_cfg (dict, optional): Configuration for testing, including
+            metrics to evaluate. Defaults to None.
     """
 
     allowed_metrics = {'PSNR': psnr, 'SSIM': ssim}
@@ -288,12 +410,17 @@ class AiLUT(BaseModel):
         self.register_buffer('cnt_iters', torch.zeros(1))
 
     def init_weights(self):
-        r"""Init weights for models.
+        """Initializes the weights of the model's submodules.
 
-        For the mapping f (`backbone`) and h (`lut_generator`), we follow the initialization in
-            [TPAMI 3D-LUT](https://github.com/HuiZeng/Image-Adaptive-3DLUT).
-        For the mapping g (`adaint`), we use all-zero and all-one initializations for its weights
-        and bias, respectively.
+        This method applies a specific initialization strategy to the different
+        components of the AiLUT model:
+        - The `backbone` is initialized using Xavier normalization for convolutional
+          layers and normal distribution for instance normalization layers, unless
+          it's a pretrained ResNet-18.
+        - The `lut_generator` is initialized to approximate an identity
+          transformation at the beginning of training.
+        - The `adaint` module is initialized with zeros for its weights and ones
+          for its bias to start with uniform sampling intervals.
         """
         def special_initilization(m):
             classname = m.__class__.__name__
@@ -309,13 +436,21 @@ class AiLUT(BaseModel):
             self.adaint.init_weights()
 
     def forward_dummy(self, imgs):
-        r"""The real implementation of model forward.
+        """Executes the core forward pass of the AiLUT model.
+
+        This method takes a batch of images and passes them through the
+        backbone, LUT generator, and AdaInt module to produce the final
+        enhanced images.
 
         Args:
-            img (Tensor): Input image, shape (b, c, h, w).
+            imgs (torch.Tensor): A batch of input images with shape
+                (b, c, h, w).
+
         Returns:
-            tuple(Tensor, Tensor, Tensor):
-                Output image, LUT weights, Sampling Coordinates.
+            A tuple containing:
+            - torch.Tensor: The enhanced output images.
+            - torch.Tensor: The learned LUT combination weights.
+            - torch.Tensor: The learned sampling coordinates (vertices).
         """
         # E: (b, f)
         codes = self.backbone(imgs)
@@ -333,13 +468,22 @@ class AiLUT(BaseModel):
 
     @auto_fp16(apply_to=('lq', ))
     def forward(self, lq, gt=None, test_mode=False, **kwargs):
-        r"""Forward function.
+        """The main forward function for the AiLUT model.
+
+        This method dispatches to either the training or testing forward
+        function based on the `test_mode` flag.
 
         Args:
-            lq (Tensor): Input lq images.
-            gt (Tensor, optional): Ground-truth image. Default: None.
-            test_mode (bool, optional): Whether in test mode or not. Default: False.
-            kwargs (dict, optional): Other arguments.
+            lq (torch.Tensor): A batch of low-quality input images.
+            gt (torch.Tensor, optional): A batch of ground-truth images.
+                Required during training. Defaults to None.
+            test_mode (bool, optional): If True, the model is in testing
+                mode. Defaults to False.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            dict: A dictionary of results, including losses during training
+                or evaluation results during testing.
         """
 
         if test_mode:
@@ -348,13 +492,18 @@ class AiLUT(BaseModel):
         return self.forward_train(lq, gt)
 
     def forward_train(self, lq, gt):
-        r"""Training forward function.
+        """Executes the forward pass during training.
+
+        This method computes the reconstruction loss and regularization
+        losses, and prepares the results for the training step.
 
         Args:
-            lq (Tensor): LQ Tensor with shape (n, c, h, w).
-            gt (Tensor): GT Tensor with shape (n, c, h, w).
+            lq (torch.Tensor): A batch of low-quality input images.
+            gt (torch.Tensor): A batch of ground-truth images.
+
         Returns:
-            outputs (dict): Output results.
+            dict: A dictionary of results containing the computed losses,
+                number of samples, and the lq, gt, and output images.
         """
         losses = dict()
         output, weights, vertices = self.forward_dummy(lq)
@@ -380,17 +529,28 @@ class AiLUT(BaseModel):
                      save_image=False,
                      save_path=None,
                      iteration=None):
-        r"""Testing forward function.
+        """Executes the forward pass during testing.
+
+        This method generates the enhanced image and, if ground-truth images
+        are provided, computes evaluation metrics. It also supports saving
+        the output images.
 
         Args:
-            lq (Tensor): LQ Tensor with shape (n, c, h, w).
-            gt (Tensor, optional): GT Tensor with shape (n, c, h, w). Default: None.
-            save_image (bool, optional): Whether to save image. Default: False.
-            save_path (str, optional): Path to save image. Default: None.
-            iteration (int, optional): Iteration for the saving image name.
-                Default: None.
+            lq (torch.Tensor): A batch of low-quality input images.
+            gt (torch.Tensor, optional): A batch of ground-truth images.
+                Defaults to None.
+            meta (list[dict], optional): A list of metadata for each image,
+                used for saving. Defaults to None.
+            save_image (bool, optional): If True, saves the enhanced images.
+                Defaults to False.
+            save_path (str, optional): The directory where saved images will
+                be stored. Defaults to None.
+            iteration (int, optional): An iteration number to include in the
+                saved image filenames. Defaults to None.
+
         Returns:
-            outputs (dict): Output results.
+            dict: A dictionary of results, including evaluation metrics and
+                the lq, gt, and output images.
         """
         output, _, _ = self.forward_dummy(lq)
         if self.test_cfg is not None and self.test_cfg.get('metrics', None):
@@ -419,13 +579,22 @@ class AiLUT(BaseModel):
         return results
 
     def train_step(self, data_batch, optimizer):
-        r"""Train step.
+        """Performs a single training step.
+
+        This method processes a batch of data, computes the loss, performs
+        backpropagation, and updates the model parameters. It also handles
+        the logic for fixing and unfixing the AdaInt module during the
+        initial stages of training.
 
         Args:
-            data_batch (dict): A batch of data.
-            optimizer (obj): Optimizer.
+            data_batch (dict): A dictionary containing a batch of training
+                data, including 'lq' and 'gt' images.
+            optimizer (torch.optim.Optimizer): The optimizer used to update
+                the model parameters.
+
         Returns:
-            dict: Returned output.
+            dict: A dictionary of results from the training step, including
+                the loss and log variables.
         """
         # fix AdaInt in the first several epochs
         if self.en_adaint and self.cnt_iters < self.n_fix_iters:
@@ -453,25 +622,35 @@ class AiLUT(BaseModel):
         return outputs
 
     def val_step(self, data_batch, **kwargs):
-        r"""Validation step.
+        """Performs a single validation step.
+
+        This method processes a batch of validation data and returns the
+        output of the model.
 
         Args:
-            data_batch (dict): A batch of data.
-            kwargs (dict, optional): Other arguments for ``val_step``.
+            data_batch (dict): A dictionary containing a batch of validation
+                data.
+            **kwargs: Additional keyword arguments.
+
         Returns:
-            dict: Returned output.
+            dict: The output of the model for the given validation batch.
         """
         output = self.forward_test(**data_batch, **kwargs)
         return output
 
     def evaluate(self, output, gt):
-        r"""Evaluation function.
+        """Calculates evaluation metrics for the model's output.
+
+        This method computes metrics such as PSNR and SSIM between the
+        model's output and the ground-truth images.
 
         Args:
-            output (Tensor): Model output with shape (n, c, h, w).
-            gt (Tensor): GT Tensor with shape (n, c, h, w).
+            output (torch.Tensor): The output images from the model.
+            gt (torch.Tensor): The ground-truth images.
+
         Returns:
-            dict: Evaluation results.
+            dict: A dictionary of evaluation results, where the keys are
+                the metric names and the values are the computed scores.
         """
         crop_border = self.test_cfg.crop_border
 

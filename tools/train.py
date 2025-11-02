@@ -1,3 +1,12 @@
+"""This script is used to train a model for image enhancement.
+
+This script provides a command-line interface for training an image
+enhancement model using the MMEditing framework. It handles argument parsing,
+configuration loading, model building, and training loop execution.
+
+Example:
+    python tools/train.py configs/adaint/adaint_fivek.py --work-dir ./work_dirs/adaint_fivek
+"""
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
 import copy

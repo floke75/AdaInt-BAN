@@ -6,24 +6,30 @@ from mmedit.datasets.base_dataset import BaseDataset
 
 
 class BaseEnhanceDataset(BaseDataset):
-    r"""General paired image folder dataset for image enhancement.
+    """A base dataset for image enhancement tasks.
 
-    It assumes that the all input images are in directory '/path/to/input'
-    (`dir_lq`), and all groundtruth images are in directory '/path/to/gt'
-    (`dir_gt`). A GT image has the SAME filename as the corresponding input
-    image. The training and testing data are splitted using an annotation
-    txt file (`ann_file`).
+    This dataset class is designed for image enhancement tasks where each
+    low-quality (LQ) image has a corresponding ground-truth (GT) high-quality
+    image. It reads image paths from an annotation file and organizes them
+    into pairs.
+
+    The dataset assumes that LQ and GT images are stored in separate
+    directories and that the filenames in the annotation file are relative
+    to these directories.
+
     Args:
-        dir_lq (str): Path to the folder of input images.
-        dir_gt (str): Path to the folder of groundtruth images.
-        ann_file (str): Path to the annotation txt file.
-        pipeline (List[dict | callable]): A sequence of data transformations.
-        test_mode (bool, optional): Store `True` when building test dataset.
-            Default: `False`.
-        filetmpl_lq (str, optional): Template for each filename for input images.
-            Default: '{}.jpg'.
-        filetmpl_gt (str, optional): Template for each filename for groundtruth images.
-            Default: '{}.jpg'.
+        dir_lq (str): The directory containing the low-quality images.
+        dir_gt (str): The directory containing the ground-truth images.
+        ann_file (str): The path to the annotation file. This file should
+            contain a list of image basenames, one per line.
+        pipeline (list[dict]): A list of data preprocessing steps to be
+            applied to each image pair.
+        test_mode (bool, optional): If True, the dataset is in testing mode.
+            Defaults to False.
+        filetmpl_lq (str, optional): A template for formatting the LQ image
+            filenames. Defaults to '{}.jpg'.
+        filetmpl_gt (str, optional): A template for formatting the GT image
+            filenames. Defaults to '{}.jpg'.
     """
     
     def __init__(self,
@@ -47,12 +53,16 @@ class BaseEnhanceDataset(BaseDataset):
         self.data_infos = self.load_annotations()
         
     def load_annotations(self):
-        r"""Load annoations for enhancement dataset.
+        """Loads image paths from the annotation file.
 
-        It loads the LQ and GT image path from the annotation file.
-        Each line in the annotation file contains the image name.
+        This method reads the annotation file line by line, where each line
+        is expected to be a basename for an image. It then constructs the
+        full paths to the low-quality (LQ) and ground-truth (GT) images
+        based on the provided directory paths and filename templates.
+
         Returns:
-            dict: Returned dict for LQ and GT pairs.
+            list[dict]: A list of dictionaries, where each dictionary
+                contains the paths to an LQ and a GT image pair.
         """
         data_infos = []
         with open(self.ann_file, 'r') as fin:
@@ -67,12 +77,21 @@ class BaseEnhanceDataset(BaseDataset):
         return data_infos
     
     def evaluate(self, results, logger=None):
-        r"""Evaluate with different metrics.
+        """Evaluates the model's performance on the dataset.
+
+        This method takes a list of evaluation results from the model,
+        aggregates them, and computes the average score for each metric.
 
         Args:
-            results (list[tuple]): The output of forward_test() of the model.
-        Return:
-            dict: Evaluation results dict.
+            results (list[dict]): A list of dictionaries, where each
+                dictionary contains the evaluation results for a single
+                sample in the dataset.
+            logger (logging.Logger, optional): A logger for printing
+                evaluation results. Defaults to None.
+
+        Returns:
+            dict: A dictionary containing the average score for each
+                evaluation metric.
         """
         if not isinstance(results, list):
             raise TypeError(f'results must be a list, but got {type(results)}')
@@ -102,24 +121,39 @@ class BaseEnhanceDataset(BaseDataset):
 
 @DATASETS.register_module()
 class FiveK(BaseEnhanceDataset):
+    """The MIT-Adobe FiveK dataset for image enhancement.
+
+    This class is a simple extension of `BaseEnhanceDataset` and is used to
+    load data from the MIT-Adobe FiveK dataset. It does not introduce any
+    new functionality but is registered in the MMEditing dataset registry
+    to be easily configurable.
+    """
     pass
 
 
 @DATASETS.register_module()
 class PPR10K(BaseEnhanceDataset):
-    r"""PPR10K dataset for image enhancement.
+    """The PPR10K dataset for image enhancement.
 
-    The difference between this class and the base class is that multiple LQ
-    images correspond to the same GT image.
+    This class is an extension of `BaseEnhanceDataset` specifically for the
+    PPR10K dataset. It overrides the `load_annotations` method to handle
+    the specific filename conventions of this dataset, where multiple
+    low-quality (LQ) images may correspond to a single ground-truth (GT)
+    image.
     """
     
     def load_annotations(self):
-        r"""Load annoations for enhancement dataset.
+        """Loads image paths from the annotation file for the PPR10K dataset.
 
-        It loads the LQ and GT image path from the annotation file.
-        Each line in the annotation file contains the image name.
+        This method overrides the base implementation to handle the PPR10K
+        dataset's naming convention, where multiple low-quality (LQ) images
+        can be associated with a single ground-truth (GT) image. The GT
+        filename is derived from the LQ filename by taking the first two
+        parts of the basename.
+
         Returns:
-            dict: Returned dict for LQ and GT pairs.
+            list[dict]: A list of dictionaries, where each dictionary
+                contains the paths to an LQ and a GT image pair.
         """
         data_infos = []
         with open(self.ann_file, 'r') as fin:
