@@ -1,3 +1,11 @@
+"""Custom data transforms used by the AdaInt pipelines.
+
+Each transform operates on a dictionary produced by the MMEditing data
+pipeline.  The docstrings capture the exact contract expected by the rest of
+the codebase so that other agents (and humans!) can confidently reuse these
+utilities without having to reverse engineer them from the implementation.
+"""
+
 import random
 import numpy as np
 from PIL import Image
@@ -9,19 +17,21 @@ from mmedit.datasets.registry import PIPELINES
 
 @PIPELINES.register_module()
 class RandomRatioCrop(object):
-    """Crops an image by a random ratio.
+    """Crops an image by a randomly sampled ratio.
 
-    This data augmentation technique randomly crops a portion of an image.
-    The size of the crop is determined by a random ratio, which can be
-    isotropic (same ratio for height and width) or anisotropic.
+    The crop is applied to all images referenced by ``keys``.  The ratio can
+    either be a single float – in which case the same lower and upper bound is
+    used for both height and width – or an explicit ``(min, max)`` pair.  When
+    ``isotropic`` is ``True`` the sampled height ratio is reused for the
+    width, otherwise height and width are sampled independently.
 
     Args:
-        keys (list[str]): A list of keys corresponding to the images to be
-            cropped in the results dictionary.
-        crop_ratio (tuple[float]): A range `(min_ratio, max_ratio)` from
-            which the crop ratio will be uniformly sampled.
-        isotropic (bool, optional): If True, the same crop ratio is used for
-            both height and width. Defaults to False.
+        keys (list[str]): Keys of the images to crop from ``results``.
+        crop_ratio (float or tuple[float, float]): Bounds for the uniformly
+            sampled crop ratio.  If a float is provided the bounds become
+            ``(crop_ratio, crop_ratio)``.
+        isotropic (bool, optional): Whether to use the same ratio for both
+            spatial dimensions. Defaults to ``False``.
     """
 
     def __init__(self, keys, crop_ratio, isotropic=False):
@@ -42,14 +52,15 @@ class RandomRatioCrop(object):
         return crop_y1, crop_y2, crop_x1, crop_x2
     
     def __call__(self, results):
-        """Applies the random crop to the images in the results dictionary.
+        """Apply the sampled crop box to all requested images.
 
         Args:
-            results (dict): A dictionary containing the images to be
-                cropped.
+            results (dict): MMEditing style results dictionary containing
+                NumPy images in ``HWC`` layout.
 
         Returns:
-            dict: The results dictionary with the cropped images.
+            dict: ``results`` with in-place cropped images and the auxiliary
+            ``"{key}_crop_size"`` entries describing the resulting ``(H, W)``.
         """
         y1, y2, x1, x2 = self._get_cropbox(results[self.keys[0]])
         for key in self.keys:
@@ -64,17 +75,17 @@ class RandomRatioCrop(object):
         
 @PIPELINES.register_module()
 class FlexibleRescaleToZeroOne(object):
-    """Rescales image pixel values to the range [0, 1].
+    """Normalise image pixel values to the ``[0, 1]`` range.
 
-    This transform is more flexible than the standard `RescaleToZeroOne`
-    as it supports both 8-bit and 16-bit integer inputs, converting them
-    to a floating-point representation between 0 and 1.
+    MMEditing's default transform only supports 8-bit inputs.  The variant used
+    by AdaInt also handles 16-bit integer arrays and already normalised floating
+    point inputs.  Values are cast to the requested floating-point precision and
+    clipped to ``[0, 1]`` to guard against minor numerical noise.
 
     Args:
-        keys (list[str]): A list of keys corresponding to the images to be
-            rescaled in the results dictionary.
-        precision (int, optional): The desired floating-point precision of
-            the output. Can be 16, 32, or 64. Defaults to 32.
+        keys (list[str]): Keys of images to rescale.
+        precision (int, optional): Target floating precision (``16``, ``32`` or
+            ``64``). Defaults to ``32``.
     """
 
     def __init__(self, keys, precision=32):
@@ -93,15 +104,7 @@ class FlexibleRescaleToZeroOne(object):
         return img.clip(0, 1)
 
     def __call__(self, results):
-        """Applies the rescaling to the images in the results dictionary.
-
-        Args:
-            results (dict): A dictionary containing the images to be
-                rescaled.
-
-        Returns:
-            dict: The results dictionary with the rescaled images.
-        """
+        """Apply normalisation in-place to all requested images."""
         for key in self.keys:
             results[key] = self._to_float(results[key])
         return results
@@ -112,27 +115,21 @@ class FlexibleRescaleToZeroOne(object):
             self.precision, self.keys)
         return repr_str
     
-
-
-@PIPELINES.register_module
+@PIPELINES.register_module()
 class RandomColorJitter(object):
-    """Randomly jitters the color of an image.
+    """Apply :class:`~torchvision.transforms.ColorJitter` to NumPy images.
 
-    This transform randomly adjusts the brightness, contrast, saturation, and
-    hue of an image. It serves as a wrapper around the `ColorJitter` transform
-    from torchvision, making it compatible with the MMEditing data pipeline.
+    The underlying torchvision transform expects PIL images or tensors.  The
+    wrapper converts the ``HWC`` NumPy arrays produced by the MMEditing data
+    pipeline to ``PIL.Image`` objects on the fly and converts the result back to
+    NumPy.
 
     Args:
-        keys (list[str]): A list of keys corresponding to the images to be
-            jittered in the results dictionary.
-        brightness (float or tuple[float], optional): How much to jitter
-            brightness. A value of 0 means no jitter. Defaults to 0.
-        contrast (float or tuple[float], optional): How much to jitter
-            contrast. A value of 0 means no jitter. Defaults to 0.
-        saturation (float or tuple[float], optional): How much to jitter
-            saturation. A value of 0 means no jitter. Defaults to 0.
-        hue (float or tuple[float], optional): How much to jitter hue.
-            A value of 0 means no jitter. Defaults to 0.
+        keys (list[str]): Keys of images to jitter.
+        brightness (float or tuple[float], optional): Brightness jitter range.
+        contrast (float or tuple[float], optional): Contrast jitter range.
+        saturation (float or tuple[float], optional): Saturation jitter range.
+        hue (float or tuple[float], optional): Hue jitter range.
     """
 
     def __init__(self, keys, brightness=0, contrast=0, saturation=0, hue=0):
@@ -143,15 +140,7 @@ class RandomColorJitter(object):
         return np.array(self._transform(Image.fromarray(img)))
 
     def __call__(self, results):
-        """Applies the color jitter to the images in the results dictionary.
-
-        Args:
-            results (dict): A dictionary containing the images to be
-                jittered.
-
-        Returns:
-            dict: The results dictionary with the jittered images.
-        """
+        """Apply colour jittering in-place for all configured keys."""
         for key in self.keys:
             results[key] = self.transform(results[key])
         return results
@@ -161,34 +150,25 @@ class RandomColorJitter(object):
         repr_str += '(brightness={}, contrast={}, saturation={}, hue={}, keys={})'.format(
             self._transform.brightness, self._transform.contrast,
             self._transform.saturation, self._transform.hue, self.keys)
+        return repr_str
         
 
 
 @PIPELINES.register_module()
 class FlipChannels(object):
-    """Flips the color channels of an image (e.g., RGB to BGR).
-
-    This is often used when working with models that expect a different
-    channel order than the one provided by the data loading library.
+    """Reverse the order of the last channel dimension of NumPy images.
 
     Args:
-        keys (list[str]): A list of keys corresponding to the images whose
-            channels will be flipped in the results dictionary.
+        keys (list[str]): Keys of images whose channel order should be
+            reversed.  This is typically used to convert between ``RGB`` and
+            ``BGR`` layouts.
     """
 
     def __init__(self, keys):
         self.keys = keys
 
     def __call__(self, results):
-        """Applies the channel flip to the images in the results dictionary.
-
-        Args:
-            results (dict): A dictionary containing the images whose channels
-                will be flipped.
-
-        Returns:
-            dict: The results dictionary with the channel-flipped images.
-        """
+        """Reverse the channel order for every configured image in-place."""
         for key in self.keys:
             results[key] = results[key][..., ::-1]
         return results

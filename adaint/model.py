@@ -1,3 +1,10 @@
+"""Model components that implement Adaptive Interval 3D LUT training.
+
+The docstrings in this module intentionally spell out tensor shapes and control
+flow so that downstream agents can reason about the data passing through the
+model without having to execute it.
+"""
+
 import numbers
 import os.path as osp
 
@@ -410,17 +417,17 @@ class AiLUT(BaseModel):
         self.register_buffer('cnt_iters', torch.zeros(1))
 
     def init_weights(self):
-        """Initializes the weights of the model's submodules.
+        """Initialise all learnable components.
 
-        This method applies a specific initialization strategy to the different
-        components of the AiLUT model:
-        - The `backbone` is initialized using Xavier normalization for convolutional
-          layers and normal distribution for instance normalization layers, unless
-          it's a pretrained ResNet-18.
-        - The `lut_generator` is initialized to approximate an identity
-          transformation at the beginning of training.
-        - The `adaint` module is initialized with zeros for its weights and ones
-          for its bias to start with uniform sampling intervals.
+        * For the lightweight TPAMI backbone (the default) the convolution and
+          instance-normalisation layers are initialised with the same strategy
+          as the original publication.  Pretrained ``res18`` backbones bypass
+          this branch and retain the torchvision initialisation.
+        * :class:`LUTGenerator` creates a bank of basis LUTs that represents an
+          identity transform so that optimisation starts from a neutral colour
+          mapping.
+        * When AdaInt is enabled its linear layer is initialised to yield
+          uniform sampling intervals.
         """
         def special_initilization(m):
             classname = m.__class__.__name__
@@ -436,21 +443,16 @@ class AiLUT(BaseModel):
             self.adaint.init_weights()
 
     def forward_dummy(self, imgs):
-        """Executes the core forward pass of the AiLUT model.
-
-        This method takes a batch of images and passes them through the
-        backbone, LUT generator, and AdaInt module to produce the final
-        enhanced images.
+        """Run the backbone, LUT generator and AdaInt modules.
 
         Args:
-            imgs (torch.Tensor): A batch of input images with shape
-                (b, c, h, w).
+            imgs (torch.Tensor): Batch of low-quality images with shape
+                ``(N, C, H, W)``.
 
         Returns:
-            A tuple containing:
-            - torch.Tensor: The enhanced output images.
-            - torch.Tensor: The learned LUT combination weights.
-            - torch.Tensor: The learned sampling coordinates (vertices).
+            tuple: ``(outs, weights, vertices)`` where ``outs`` is the enhanced
+            image batch, ``weights`` are the LUT combination weights and
+            ``vertices`` are the sampling coordinates.
         """
         # E: (b, f)
         codes = self.backbone(imgs)
@@ -529,28 +531,26 @@ class AiLUT(BaseModel):
                      save_image=False,
                      save_path=None,
                      iteration=None):
-        """Executes the forward pass during testing.
-
-        This method generates the enhanced image and, if ground-truth images
-        are provided, computes evaluation metrics. It also supports saving
-        the output images.
+        """Run inference and optionally compute metrics/save images.
 
         Args:
-            lq (torch.Tensor): A batch of low-quality input images.
-            gt (torch.Tensor, optional): A batch of ground-truth images.
-                Defaults to None.
-            meta (list[dict], optional): A list of metadata for each image,
-                used for saving. Defaults to None.
-            save_image (bool, optional): If True, saves the enhanced images.
-                Defaults to False.
-            save_path (str, optional): The directory where saved images will
-                be stored. Defaults to None.
-            iteration (int, optional): An iteration number to include in the
-                saved image filenames. Defaults to None.
+            lq (torch.Tensor): Batch of low-quality input images.
+            gt (torch.Tensor, optional): Ground-truth images required when
+                metrics are configured. Defaults to ``None``.
+            meta (list[dict], optional): Per-sample metadata dictionaries. The
+                first entry must contain ``"lq_path"`` when ``save_image`` is
+                ``True``. Defaults to ``None``.
+            save_image (bool, optional): Whether to persist the enhanced
+                images. Defaults to ``False``.
+            save_path (str, optional): Directory used together with
+                ``meta[0]['lq_path']`` to assemble the filename. Defaults to
+                ``None``.
+            iteration (int, optional): Optional counter appended to filenames.
+                Defaults to ``None``.
 
         Returns:
-            dict: A dictionary of results, including evaluation metrics and
-                the lq, gt, and output images.
+            dict: Either ``{"eval_result": {...}}`` when metrics are computed
+            or a dictionary containing CPU tensors for the available images.
         """
         output, _, _ = self.forward_dummy(lq)
         if self.test_cfg is not None and self.test_cfg.get('metrics', None):
@@ -579,22 +579,17 @@ class AiLUT(BaseModel):
         return results
 
     def train_step(self, data_batch, optimizer):
-        """Performs a single training step.
-
-        This method processes a batch of data, computes the loss, performs
-        backpropagation, and updates the model parameters. It also handles
-        the logic for fixing and unfixing the AdaInt module during the
-        initial stages of training.
+        """Perform a single training step and update optimisation state.
 
         Args:
-            data_batch (dict): A dictionary containing a batch of training
-                data, including 'lq' and 'gt' images.
-            optimizer (torch.optim.Optimizer): The optimizer used to update
-                the model parameters.
+            data_batch (dict): Training batch with ``'lq'`` and ``'gt'`` keys
+                (and optional metadata).
+            optimizer (torch.optim.Optimizer): Optimiser instance responsible
+                for updating the learnable parameters.
 
         Returns:
-            dict: A dictionary of results from the training step, including
-                the loss and log variables.
+            dict: Results emitted by :meth:`forward_train` augmented with
+            ``log_vars`` produced by :meth:`parse_losses`.
         """
         # fix AdaInt in the first several epochs
         if self.en_adaint and self.cnt_iters < self.n_fix_iters:
