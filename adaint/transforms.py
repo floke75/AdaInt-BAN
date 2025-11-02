@@ -9,13 +9,19 @@ from mmedit.datasets.registry import PIPELINES
 
 @PIPELINES.register_module()
 class RandomRatioCrop(object):
-    r"""Random crop the image.
+    """Crops an image by a random ratio.
+
+    This data augmentation technique randomly crops a portion of an image.
+    The size of the crop is determined by a random ratio, which can be
+    isotropic (same ratio for height and width) or anisotropic.
 
     Args:
-        keys (Sequence[str]): The images to be cropped.
-        crop_ratio (tuple): Expected ratio of size after cropping.
-        isotropic (bool, optional): Whether to perform isotropic cropping.
-            Default: False.
+        keys (list[str]): A list of keys corresponding to the images to be
+            cropped in the results dictionary.
+        crop_ratio (tuple[float]): A range `(min_ratio, max_ratio)` from
+            which the crop ratio will be uniformly sampled.
+        isotropic (bool, optional): If True, the same crop ratio is used for
+            both height and width. Defaults to False.
     """
 
     def __init__(self, keys, crop_ratio, isotropic=False):
@@ -36,6 +42,15 @@ class RandomRatioCrop(object):
         return crop_y1, crop_y2, crop_x1, crop_x2
     
     def __call__(self, results):
+        """Applies the random crop to the images in the results dictionary.
+
+        Args:
+            results (dict): A dictionary containing the images to be
+                cropped.
+
+        Returns:
+            dict: The results dictionary with the cropped images.
+        """
         y1, y2, x1, x2 = self._get_cropbox(results[self.keys[0]])
         for key in self.keys:
             results[key] = results[key][y1:y2, x1:x2, :]
@@ -49,14 +64,17 @@ class RandomRatioCrop(object):
         
 @PIPELINES.register_module()
 class FlexibleRescaleToZeroOne(object):
-    r"""Transform the images into a range between 0 and 1.
-    
-    Compared to the original `RescaleToZeroOne` provided by mmedit, this implementation
-    supports 16-bit images.
+    """Rescales image pixel values to the range [0, 1].
+
+    This transform is more flexible than the standard `RescaleToZeroOne`
+    as it supports both 8-bit and 16-bit integer inputs, converting them
+    to a floating-point representation between 0 and 1.
 
     Args:
-        keys (Sequence[str]): The images to be rescaled.
-        precision (int, optional): precision of the float type. Default: 32.
+        keys (list[str]): A list of keys corresponding to the images to be
+            rescaled in the results dictionary.
+        precision (int, optional): The desired floating-point precision of
+            the output. Can be 16, 32, or 64. Defaults to 32.
     """
 
     def __init__(self, keys, precision=32):
@@ -75,6 +93,15 @@ class FlexibleRescaleToZeroOne(object):
         return img.clip(0, 1)
 
     def __call__(self, results):
+        """Applies the rescaling to the images in the results dictionary.
+
+        Args:
+            results (dict): A dictionary containing the images to be
+                rescaled.
+
+        Returns:
+            dict: The results dictionary with the rescaled images.
+        """
         for key in self.keys:
             results[key] = self._to_float(results[key])
         return results
@@ -89,26 +116,23 @@ class FlexibleRescaleToZeroOne(object):
 
 @PIPELINES.register_module
 class RandomColorJitter(object):
-    r"""(This is a cvframe interface to the torchvision.ColorJitter)
-    Randomly change the brightness, contrast, saturation and hue of an image.
-    If the image is torch Tensor, it is expected
-    to have [..., 3, H, W] shape, where ... means an arbitrary number of leading dimensions.
-    If img is PIL Image, mode "1", "L", "I", "F" and modes with transparency (alpha channel) are not supported.
+    """Randomly jitters the color of an image.
+
+    This transform randomly adjusts the brightness, contrast, saturation, and
+    hue of an image. It serves as a wrapper around the `ColorJitter` transform
+    from torchvision, making it compatible with the MMEditing data pipeline.
 
     Args:
-        keys (Sequence[str]): The images to be applied jitter.
-        brightness (float or tuple of float (min, max), optional): How much to jitter brightness.
-            brightness_factor is chosen uniformly from [max(0, 1 - brightness), 1 + brightness]
-            or the given [min, max]. Should be non negative numbers.
-        contrast (float or tuple of float (min, max), optional): How much to jitter contrast.
-            contrast_factor is chosen uniformly from [max(0, 1 - contrast), 1 + contrast]
-            or the given [min, max]. Should be non negative numbers.
-        saturation (float or tuple of float (min, max), optional): How much to jitter saturation.
-            saturation_factor is chosen uniformly from [max(0, 1 - saturation), 1 + saturation]
-            or the given [min, max]. Should be non negative numbers.
-        hue (float or tuple of float (min, max), optional): How much to jitter hue.
-            hue_factor is chosen uniformly from [-hue, hue] or the given [min, max].
-            Should have 0<= hue <= 0.5 or -0.5 <= min <= max <= 0.5.
+        keys (list[str]): A list of keys corresponding to the images to be
+            jittered in the results dictionary.
+        brightness (float or tuple[float], optional): How much to jitter
+            brightness. A value of 0 means no jitter. Defaults to 0.
+        contrast (float or tuple[float], optional): How much to jitter
+            contrast. A value of 0 means no jitter. Defaults to 0.
+        saturation (float or tuple[float], optional): How much to jitter
+            saturation. A value of 0 means no jitter. Defaults to 0.
+        hue (float or tuple[float], optional): How much to jitter hue.
+            A value of 0 means no jitter. Defaults to 0.
     """
 
     def __init__(self, keys, brightness=0, contrast=0, saturation=0, hue=0):
@@ -119,6 +143,15 @@ class RandomColorJitter(object):
         return np.array(self._transform(Image.fromarray(img)))
 
     def __call__(self, results):
+        """Applies the color jitter to the images in the results dictionary.
+
+        Args:
+            results (dict): A dictionary containing the images to be
+                jittered.
+
+        Returns:
+            dict: The results dictionary with the jittered images.
+        """
         for key in self.keys:
             results[key] = self.transform(results[key])
         return results
@@ -133,16 +166,29 @@ class RandomColorJitter(object):
 
 @PIPELINES.register_module()
 class FlipChannels(object):
-    r"""Flip the color channels.
+    """Flips the color channels of an image (e.g., RGB to BGR).
+
+    This is often used when working with models that expect a different
+    channel order than the one provided by the data loading library.
 
     Args:
-        keys (Sequence[str]): The images to be flipped.
+        keys (list[str]): A list of keys corresponding to the images whose
+            channels will be flipped in the results dictionary.
     """
 
     def __init__(self, keys):
         self.keys = keys
 
     def __call__(self, results):
+        """Applies the channel flip to the images in the results dictionary.
+
+        Args:
+            results (dict): A dictionary containing the images whose channels
+                will be flipped.
+
+        Returns:
+            dict: The results dictionary with the channel-flipped images.
+        """
         for key in self.keys:
             results[key] = results[key][..., ::-1]
         return results
