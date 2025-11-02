@@ -24,14 +24,21 @@ The predicted vertices and output values are then combined to form an image-adap
 ## Requirements
 
 - Python 3.7+
-- PyTorch 1.6+
-- CUDA 10.1+
-- MMEditing
+- PyTorch 1.6+ with CUDA 10.1+ (matching your local toolkit)
+- [MMEditing](https://github.com/open-mmlab/mmediting) and its dependencies
+- The custom AiLUT operator (built from source, see below)
 
-To install the required dependencies, run:
+To install the Python dependencies provided by this repository, run:
 
 ```bash
 pip install -r requirements.txt
+```
+
+MMEditing itself is vendored as a subpackage. You can install it together with
+the AdaInt extensions in editable mode to make development easier:
+
+```bash
+pip install -v -e .
 ```
 
 ## Setup
@@ -45,13 +52,44 @@ pip install -r requirements.txt
 
 2.  **Install the custom AiLUT-Transform operator:**
 
-    The AiLUT-Transform operator is implemented as a custom PyTorch extension with CUDA and C++ code. To build and install it, run the following command from the `adaint/ailut_transform` directory:
+    The AiLUT-Transform operator is implemented as a PyTorch extension with
+    CUDA and C++ code. You can build and install it directly from the project
+    root using:
 
     ```bash
-    cd adaint/ailut_transform
-    python setup.py develop
-    cd ../..
+    pip install -v -e adaint/ailut_transform
     ```
+
+    This command compiles the extension in-place and exposes it as the
+    ``ailut`` Python package used by ``adaint.model``.
+
+3.  **(Optional) Install the AdaInt package in editable mode:**
+
+    ```bash
+    pip install -v -e .
+    ```
+
+    This exposes the dataset and model registries directly through the
+    ``adaint`` namespace, which is convenient when authoring new configs or
+    scripts.
+
+## Repository Layout
+
+The project follows the conventions of MMEditing. The most relevant entry
+points are:
+
+- `adaint/model.py` – the AiLUT model, including the AdaInt module and LUT
+  generator.
+- `adaint/dataset.py` – paired image datasets used for FiveK and PPR10K.
+- `adaint/transforms.py` – custom data pipeline operators referenced by the
+  configs.
+- `adaint/demo.py` – minimal inference script for enhancing a single image.
+- `configs/adaint/` – ready-to-use training/evaluation configuration files.
+- `tools/train.py` and `tools/test.py` – wrappers around MMEditing's training
+  and evaluation entry points.
+
+Each module now contains detailed docstrings describing expected tensor shapes
+and data flow to ease navigation for LLM-based coding agents.
 
 ## Usage
 
@@ -67,13 +105,26 @@ Make sure to update the `data_root` path in the configuration file to point to y
 
 ### Testing
 
-To evaluate a trained model, use the `tools/test.py` script. You will need to provide the configuration file and the path to the trained model checkpoint.
+To evaluate a trained model, use the `tools/test.py` script. You will need to
+provide the configuration file and the path to the trained model checkpoint.
 
 ```bash
 python tools/test.py configs/adaint/adaint_fivek.py /path/to/your/checkpoint.pth --save-path ./results/
 ```
 
-The `--save-path` argument is optional and specifies a directory where the enhanced images will be saved.
+The `--save-path` argument is optional and specifies a directory where the
+enhanced images will be saved. When omitted, only metrics are reported.
+
+### Single-image demo
+
+For a quick qualitative check, the repository ships a convenience wrapper that
+aligns with the documentation in `adaint/demo.py`:
+
+```bash
+python -m adaint.demo configs/adaint/adaint_fivek.py /path/to/checkpoint.pth input.jpg output.jpg
+```
+
+All command-line parameters are described in the script-level docstring.
 
 ## Citation
 

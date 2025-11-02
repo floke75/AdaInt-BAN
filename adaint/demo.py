@@ -1,5 +1,7 @@
-import os
+"""Command-line demo for running AdaInt inference on a single image."""
+
 import argparse
+import os
 
 import mmcv
 import torch
@@ -11,12 +13,18 @@ from mmedit.datasets.pipelines import Compose
 
 
 def enhancement_inference(model, img):
-    r"""Inference image with the model.
+    r"""Run the configured model on ``img`` and return the enhanced tensor.
+
+    The helper mirrors :func:`mmedit.apis.inference_model` but strips the
+    ground-truth specific steps from the pipeline so that arbitrary standalone
+    images can be processed.
+
     Args:
-        model (nn.Module): The loaded model.
-        img (str): File path of input image.
+        model (torch.nn.Module): Loaded MMEditing model.
+        img (str): Path to the input image on disk.
+
     Returns:
-        Tensor: The predicted enhancement result.
+        torch.Tensor: The enhanced image tensor produced by the model.
     """
     cfg = model.cfg
     device = next(model.parameters()).device  # model device
@@ -46,22 +54,25 @@ def enhancement_inference(model, img):
 
 
 def parse_args():
+    """Build and parse the CLI arguments used by :func:`main`."""
+
     parser = argparse.ArgumentParser(description='Enhancement demo')
-    parser.add_argument('config', help='test config file path')
-    parser.add_argument('checkpoint', help='checkpoint file')
-    parser.add_argument('img_path', help='path to input image file')
-    parser.add_argument('save_path', help='path to save enhancement result')
+    parser.add_argument('config', help='Path to the test config file')
+    parser.add_argument('checkpoint', help='Checkpoint file to load')
+    parser.add_argument('img_path', help='Path to the input image file')
+    parser.add_argument('save_path', help='Destination for the enhanced image')
     parser.add_argument('--device', type=int, default=0, help='CUDA device id')
     args = parser.parse_args()
     return args
 
 
 def main():
+    """Entry point for the CLI demo script."""
+
     args = parse_args()
 
     if not os.path.isfile(args.img_path):
-        raise ValueError('It seems that you did not input a valid '
-                         '"image_path".')
+        raise ValueError('It seems that you did not input a valid "image_path".')
 
     model = init_model(
         args.config, args.checkpoint, device=torch.device('cuda', args.device))

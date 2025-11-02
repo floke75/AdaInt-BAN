@@ -1,3 +1,5 @@
+"""Dataset definitions used by the AdaInt training and evaluation scripts."""
+
 import os.path as osp
 from collections import defaultdict
 
@@ -6,30 +8,26 @@ from mmedit.datasets.base_dataset import BaseDataset
 
 
 class BaseEnhanceDataset(BaseDataset):
-    """A base dataset for image enhancement tasks.
+    """Paired low-quality/high-quality dataset for image enhancement.
 
-    This dataset class is designed for image enhancement tasks where each
-    low-quality (LQ) image has a corresponding ground-truth (GT) high-quality
-    image. It reads image paths from an annotation file and organizes them
-    into pairs.
-
-    The dataset assumes that LQ and GT images are stored in separate
-    directories and that the filenames in the annotation file are relative
-    to these directories.
+    The implementation mirrors the conventions used throughout the official
+    MMEditing dataset definitions so that AdaInt configurations can plug into
+    the framework without surprises.  Annotation files list basenames without
+    an extension; ``filetmpl_lq`` and ``filetmpl_gt`` are formatted with the
+    basename and concatenated with ``dir_lq`` and ``dir_gt`` respectively.
 
     Args:
-        dir_lq (str): The directory containing the low-quality images.
-        dir_gt (str): The directory containing the ground-truth images.
-        ann_file (str): The path to the annotation file. This file should
-            contain a list of image basenames, one per line.
-        pipeline (list[dict]): A list of data preprocessing steps to be
-            applied to each image pair.
-        test_mode (bool, optional): If True, the dataset is in testing mode.
-            Defaults to False.
-        filetmpl_lq (str, optional): A template for formatting the LQ image
-            filenames. Defaults to '{}.jpg'.
-        filetmpl_gt (str, optional): A template for formatting the GT image
-            filenames. Defaults to '{}.jpg'.
+        dir_lq (str): Directory containing the low-quality images.
+        dir_gt (str): Directory containing the ground-truth images.
+        ann_file (str): Path to a text file with one basename per line.
+        pipeline (list[dict]): Data pipeline configuration consumed by
+            :class:`BaseDataset`.
+        test_mode (bool, optional): Whether the dataset is used for inference
+            (disables data augmentations). Defaults to ``False``.
+        filetmpl_lq (str, optional): Template used to build LQ file names.
+            Defaults to ``'{}.jpg'``.
+        filetmpl_gt (str, optional): Template used to build GT file names.
+            Defaults to ``'{}.jpg'``.
     """
     
     def __init__(self,
@@ -53,16 +51,11 @@ class BaseEnhanceDataset(BaseDataset):
         self.data_infos = self.load_annotations()
         
     def load_annotations(self):
-        """Loads image paths from the annotation file.
-
-        This method reads the annotation file line by line, where each line
-        is expected to be a basename for an image. It then constructs the
-        full paths to the low-quality (LQ) and ground-truth (GT) images
-        based on the provided directory paths and filename templates.
+        """Parse the annotation file into ``(lq_path, gt_path)`` pairs.
 
         Returns:
-            list[dict]: A list of dictionaries, where each dictionary
-                contains the paths to an LQ and a GT image pair.
+            list[dict]: A list of dictionaries with ``lq_path`` and
+            ``gt_path`` keys.
         """
         data_infos = []
         with open(self.ann_file, 'r') as fin:
@@ -77,21 +70,16 @@ class BaseEnhanceDataset(BaseDataset):
         return data_infos
     
     def evaluate(self, results, logger=None):
-        """Evaluates the model's performance on the dataset.
-
-        This method takes a list of evaluation results from the model,
-        aggregates them, and computes the average score for each metric.
+        """Aggregate evaluation metrics emitted by :meth:`forward_test`.
 
         Args:
-            results (list[dict]): A list of dictionaries, where each
-                dictionary contains the evaluation results for a single
-                sample in the dataset.
-            logger (logging.Logger, optional): A logger for printing
-                evaluation results. Defaults to None.
+            results (list[dict]): Each entry must contain an ``"eval_result"``
+                dictionary with scalar metric values for that sample.
+            logger (logging.Logger, optional): Unused placeholder kept for the
+                :class:`BaseDataset` interface. Defaults to ``None``.
 
         Returns:
-            dict: A dictionary containing the average score for each
-                evaluation metric.
+            dict: Dataset-wide averages keyed by the metric name.
         """
         if not isinstance(results, list):
             raise TypeError(f'results must be a list, but got {type(results)}')
